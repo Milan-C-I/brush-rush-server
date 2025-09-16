@@ -1,0 +1,25 @@
+{
+  "name": "brush-rush-server",
+  "version": "1.0.0",
+  "description": "Backend server for Brush Rush with Socket.IO",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "socket.io",
+    "Brush",
+    "Rush",
+    "nodejs"
+  ],
+  "author": "Milan C I",
+  "dependencies": {
+    "dotenv": "^16.1.4",
+    "express": "^4.18.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
