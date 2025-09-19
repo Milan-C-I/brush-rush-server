@@ -6,7 +6,7 @@ const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
+    origin: ["https://brush-rush.vercel.app"],
     methods: ["GET", "POST"],
   },
 })
@@ -691,7 +691,7 @@ app.get("/", (req, res) => {
 })
 
 const PORT = process.env.SOCKET_PORT || 3001
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT,"0.0.0.0", () => {
   console.log(`Socket.IO server running on port ${PORT}`)
   console.log(`WebSocket URL: ws://localhost:${PORT}`)
   console.log("Ready to accept connections...")
