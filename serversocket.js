@@ -1,7 +1,9 @@
 const { Server } = require("socket.io")
 const { createServer } = require("http")
+const express = require('express')
 
-const httpServer = createServer()
+const app = express()
+const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: {
     origin: "*",
@@ -682,6 +684,10 @@ io.on("connection", (socket) => {
     }
     io.emit("server-stats", stats)
   }, 30000) // Every 30 seconds
+})
+
+app.get("/", (req, res) => {
+  res.send("Brush Rush Server")
 })
 
 const PORT = process.env.SOCKET_PORT || 3001
