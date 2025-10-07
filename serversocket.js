@@ -6,10 +6,18 @@ const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: {
-    origin: ["https://brush-rush.vercel.app"],
+    origin: [
+      "https://brush-rush.vercel.app",
+      "http://localhost:3000",
+    ],
     methods: ["GET", "POST"],
+    credentials: true,
   },
-})
+  transports: ["websocket", "polling"],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+});
+
 
 // Game state management
 const rooms = new Map()
