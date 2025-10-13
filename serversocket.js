@@ -9,6 +9,7 @@ const io = new Server(httpServer, {
     origin: [
       "https://brush-rush.vercel.app",
       "http://localhost:3000",
+      /\.vercel\.app$/, // Allow all Vercel preview deployments
     ],
     methods: ["GET", "POST"],
     credentials: true,
@@ -16,6 +17,7 @@ const io = new Server(httpServer, {
   transports: ["websocket", "polling"],
   pingTimeout: 60000,
   pingInterval: 25000,
+  connectTimeout: 45000,
 });
 
 
@@ -24,7 +26,7 @@ const rooms = new Map()
 const playerRooms = new Map()
 const roomTimers = new Map()
 
-// Room interface structure (matching the TypeScript types)
+// Room interface structure
 const createRoom = (id, name, maxPlayers, isPrivate, password, customWords, rounds, drawTime, categories = [], difficulty = "mixed") => ({
   id,
   name,
@@ -40,7 +42,7 @@ const createRoom = (id, name, maxPlayers, isPrivate, password, customWords, roun
   currentRound: 0,
   currentDrawer: null,
   currentWord: null,
-  gameState: "waiting", // 'waiting', 'playing', 'finished'
+  gameState: "waiting",
   gamePhase: "waiting",
   currentWordCategory: "",
   currentWordIsCustom: false,
@@ -65,7 +67,6 @@ const createPlayer = (id, name, avatar) => ({
 const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase()
 
 const getRandomWord = (customWords, categories = [], difficulty = "mixed") => {
-  // Default words by category
   const wordsByCategory = {
     Animals: ["cat", "dog", "elephant", "tiger", "lion", "bird", "fish", "horse", "rabbit", "bear"],
     Objects: ["chair", "table", "car", "house", "phone", "book", "computer", "pen", "clock", "lamp"],
@@ -75,7 +76,6 @@ const getRandomWord = (customWords, categories = [], difficulty = "mixed") => {
     Abstract: ["love", "happiness", "freedom", "peace", "hope", "dream", "fear", "anger", "joy", "wisdom"]
   }
 
-  // Difficulty levels
   const difficultyWords = {
     easy: ["cat", "dog", "sun", "car", "house", "tree", "book", "ball", "fish", "bird"],
     medium: ["elephant", "computer", "mountain", "happiness", "dancing", "cooking", "flower", "river", "clock", "phone"],
@@ -84,12 +84,10 @@ const getRandomWord = (customWords, categories = [], difficulty = "mixed") => {
 
   let wordList = []
 
-  // Use custom words if available
   if (customWords && customWords.length > 0) {
     wordList = [...customWords]
   }
 
-  // Add words from selected categories
   if (categories && categories.length > 0) {
     categories.forEach(category => {
       if (wordsByCategory[category]) {
@@ -98,7 +96,6 @@ const getRandomWord = (customWords, categories = [], difficulty = "mixed") => {
     })
   }
 
-  // Add difficulty-based words
   if (difficulty === "mixed") {
     Object.values(difficultyWords).forEach(words => {
       wordList = [...wordList, ...words]
@@ -107,14 +104,11 @@ const getRandomWord = (customWords, categories = [], difficulty = "mixed") => {
     wordList = [...wordList, ...difficultyWords[difficulty]]
   }
 
-  // Fallback to default words if no words available
   if (wordList.length === 0) {
     wordList = ["cat", "dog", "house", "tree", "car", "sun", "moon", "star", "fish", "bird"]
   }
 
-  // Remove duplicates
   wordList = [...new Set(wordList)]
-
   return wordList[Math.floor(Math.random() * wordList.length)]
 }
 
@@ -147,30 +141,26 @@ const endRound = (roomId) => {
   const room = rooms.get(roomId)
   if (!room) return
 
-  // Emit round ended event with the word
   io.to(roomId).emit("round-ended", { 
     room, 
     word: room.currentWord 
   })
 
-  // Reset drawing status for all players
   room.players.forEach((player) => {
     player.isDrawing = false
-    player.hasGuessed = false // Reset for next round
+    player.hasGuessed = false
   })
 
   room.currentRound++
 
   if (room.currentRound > room.rounds) {
-    // Game finished
     room.gameState = "finished"
     room.gamePhase = "waiting"
     io.to(roomId).emit("game-finished", { room })
   } else {
-    // Start next round after a short delay
     setTimeout(() => {
       startNextRound(roomId)
-    }, 2000) // 2 second delay between rounds
+    }, 2000)
   }
 }
 
@@ -178,28 +168,23 @@ const startNextRound = (roomId) => {
   const room = rooms.get(roomId)
   if (!room) return
 
-  // Reset player guess status and drawing status
   room.players.forEach((player) => {
     player.hasGuessed = false
     player.isDrawing = false
   })
 
-  // Select next drawer
   const currentDrawerIndex = room.players.findIndex((p) => p.id === room.currentDrawer?.id)
   const nextDrawerIndex = (currentDrawerIndex + 1) % room.players.length
   room.currentDrawer = room.players[nextDrawerIndex]
   room.currentDrawer.isDrawing = true
 
-  // Select new word
   room.currentWord = getRandomWord(room.customWords, room.categories, room.difficulty)
   room.usedWords.push(room.currentWord)
   room.currentWordCategory = room.customWords && room.customWords.includes(room.currentWord) ? "Custom" : "Default"
   room.currentWordIsCustom = room.customWords && room.customWords.includes(room.currentWord)
 
-  // Clear drawing data for new round
   room.drawingData = []
 
-  // Notify all players about round start (this will clear their canvases)
   io.to(roomId).emit("round-started", {
     room,
     word: room.currentWord,
@@ -213,13 +198,11 @@ const resetGame = (roomId) => {
   const room = rooms.get(roomId)
   if (!room) return
 
-  // Clear any existing timers
   if (roomTimers.has(roomId)) {
     clearInterval(roomTimers.get(roomId))
     roomTimers.delete(roomId)
   }
 
-  // Reset game state
   room.gameState = "waiting"
   room.gamePhase = "waiting"
   room.currentRound = 0
@@ -231,7 +214,6 @@ const resetGame = (roomId) => {
   room.usedWords = []
   room.drawingData = []
 
-  // Reset player states
   room.players.forEach((player) => {
     player.score = 0
     player.isDrawing = false
@@ -242,12 +224,57 @@ const resetGame = (roomId) => {
   return room
 }
 
+// Helper function to remove player from room
+const removePlayerFromRoom = (socket, roomId, playerName = null) => {
+  const room = rooms.get(roomId)
+  if (!room) return
+
+  const player = room.players.find((p) => p.id === socket.id)
+  if (!player) return
+
+  const displayName = playerName || player.name
+
+  room.players = room.players.filter((p) => p.id !== socket.id)
+  delete room.scores[socket.id]
+  playerRooms.delete(socket.id)
+
+  console.log(`[Server] Player ${displayName} removed from room ${roomId}. Remaining players: ${room.players.length}`)
+
+  if (room.players.length === 0) {
+    if (roomTimers.has(roomId)) {
+      clearInterval(roomTimers.get(roomId))
+      roomTimers.delete(roomId)
+    }
+    rooms.delete(roomId)
+    console.log(`[Server] Room ${roomId} deleted (empty)`)
+  } else {
+    if (player.isHost && room.players.length > 0) {
+      room.players[0].isHost = true
+      console.log(`[Server] Host transferred to ${room.players[0].name} in room ${roomId}`)
+    }
+
+    if (player.isDrawing && room.gameState === "playing") {
+      if (roomTimers.has(roomId)) {
+        clearInterval(roomTimers.get(roomId))
+        roomTimers.delete(roomId)
+      }
+      endRound(roomId)
+    }
+
+    socket.to(roomId).emit("player-left", {
+      player,
+      players: room.players,
+    })
+  }
+
+  return player
+}
+
 io.on("connection", (socket) => {
   console.log("Player connected:", socket.id)
 
   socket.on("create-room", ({ roomData, player }) => {
     try {
-      // Generate a unique room ID
       let roomId = generateRoomId()
       while (rooms.has(roomId)) {
         roomId = generateRoomId()
@@ -278,7 +305,11 @@ io.on("connection", (socket) => {
       socket.join(roomId)
 
       console.log(`[Server] Room ${roomId} created by ${player.name}`)
-      socket.emit("room-created", { roomId, room })
+      
+      // Add a small delay before emitting to ensure everything is set up
+      setTimeout(() => {
+        socket.emit("room-created", { roomId, room })
+      }, 100)
     } catch (error) {
       console.error("Create room error:", error)
       socket.emit("error", { message: "Failed to create room: " + error.message })
@@ -301,7 +332,6 @@ io.on("connection", (socket) => {
         return
       }
 
-      // Update room settings
       if (roomData.isPrivate !== undefined) room.isPrivate = roomData.isPrivate
       if (roomData.password !== undefined) room.password = roomData.password
       if (roomData.maxPlayers !== undefined) room.maxPlayers = roomData.maxPlayers
@@ -335,7 +365,6 @@ io.on("connection", (socket) => {
         return
       }
 
-      // Update room settings if provided
       if (roomData) {
         if (roomData.isPrivate !== undefined) room.isPrivate = roomData.isPrivate
         if (roomData.password !== undefined) room.password = roomData.password
@@ -347,7 +376,6 @@ io.on("connection", (socket) => {
         if (roomData.difficulty !== undefined) room.difficulty = roomData.difficulty
       }
 
-      // Reset the game
       resetGame(roomId)
 
       console.log(`[Server] Game restarted in room ${roomId}`)
@@ -379,7 +407,6 @@ io.on("connection", (socket) => {
         return
       }
 
-      // Check if player is already in the room
       const existingPlayer = room.players.find(p => p.id === socket.id)
       if (existingPlayer) {
         console.log(`[Server] Player ${player.name} already in room ${roomId}`)
@@ -387,12 +414,10 @@ io.on("connection", (socket) => {
         return
       }
 
-      // Check if player is already in another room
       const currentRoomId = playerRooms.get(socket.id)
       if (currentRoomId && currentRoomId !== roomId) {
         const currentRoom = rooms.get(currentRoomId)
         if (currentRoom) {
-          // Remove player from current room
           currentRoom.players = currentRoom.players.filter(p => p.id !== socket.id)
           delete currentRoom.scores[socket.id]
           socket.leave(currentRoomId)
@@ -411,7 +436,11 @@ io.on("connection", (socket) => {
       socket.join(roomId)
 
       console.log(`[Server] ${player.name} joined room ${roomId}`)
+      
+      // Emit to the joining player first
       socket.emit("room-joined", { room })
+      
+      // Then notify others
       socket.to(roomId).emit("player-joined", { player: newPlayer, players: room.players })
 
       // Send existing drawing data to new player if game is in progress
@@ -423,6 +452,25 @@ io.on("connection", (socket) => {
     } catch (error) {
       console.error("Join room error:", error)
       socket.emit("error", { message: "Failed to join room: " + error.message })
+    }
+  })
+
+  // Add leave-room handler
+  socket.on("leave-room", ({ roomId }) => {
+    try {
+      console.log(`[Server] Player ${socket.id} leaving room ${roomId}`)
+      const room = rooms.get(roomId)
+      
+      if (room) {
+        const player = removePlayerFromRoom(socket, roomId)
+        socket.leave(roomId)
+        
+        if (player) {
+          console.log(`[Server] Player ${player.name} left room ${roomId}`)
+        }
+      }
+    } catch (error) {
+      console.error("Leave room error:", error)
     }
   })
 
@@ -454,7 +502,6 @@ io.on("connection", (socket) => {
       room.gamePhase = "drawing"
       room.currentRound = 1
       
-      // Set first drawer
       room.currentDrawer = room.players[0]
       room.currentDrawer.isDrawing = true
       
@@ -463,7 +510,6 @@ io.on("connection", (socket) => {
       room.currentWordCategory = room.customWords && room.customWords.includes(room.currentWord) ? "Custom" : "Default"
       room.currentWordIsCustom = room.customWords && room.customWords.includes(room.currentWord)
 
-      // Clear drawing data for new game
       room.drawingData = []
 
       console.log(`[Server] Game started in room ${roomId}`)
@@ -497,7 +543,6 @@ io.on("connection", (socket) => {
         timestamp: Date.now(),
       }
 
-      // Check if it's a correct guess
       if (
         room.gameState === "playing" &&
         room.currentWord &&
@@ -516,12 +561,10 @@ io.on("connection", (socket) => {
           points,
         })
 
-        // Check if all players have guessed
         const nonDrawerPlayers = room.players.filter((p) => p.id !== room.currentDrawer?.id)
         const allGuessed = nonDrawerPlayers.every((p) => p.hasGuessed)
 
         if (allGuessed) {
-          // All players guessed correctly, end round immediately
           if (roomTimers.has(roomId)) {
             clearInterval(roomTimers.get(roomId))
             roomTimers.delete(roomId)
@@ -529,7 +572,6 @@ io.on("connection", (socket) => {
           endRound(roomId)
         }
       } else {
-        // Regular chat message
         io.to(roomId).emit("chat-message", chatMessage)
       }
     } catch (error) {
@@ -545,10 +587,7 @@ io.on("connection", (socket) => {
       const player = room.players.find((p) => p.id === socket.id)
       if (!player?.isDrawing) return
 
-      // Store the drawing event
       room.drawingData.push(event)
-      
-      // Broadcast to all other players in the room
       socket.to(roomId).emit("drawing-event", event)
       
       console.log(`[Server] Drawing event ${event.type} broadcasted to room ${roomId}`)
@@ -565,10 +604,7 @@ io.on("connection", (socket) => {
       const player = room.players.find((p) => p.id === socket.id)
       if (!player?.isDrawing) return
 
-      // Clear stored drawing data
       room.drawingData = []
-      
-      // Broadcast canvas clear to all other players
       socket.to(roomId).emit("canvas-cleared")
       
       console.log(`[Server] Canvas cleared and broadcasted to room ${roomId}`)
@@ -635,76 +671,61 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     try {
       const roomId = playerRooms.get(socket.id)
-      if (!roomId) return
-
-      const room = rooms.get(roomId)
-      if (!room) return
-
-      const player = room.players.find((p) => p.id === socket.id)
-      if (!player) return
-
-      room.players = room.players.filter((p) => p.id !== socket.id)
-      delete room.scores[socket.id]
-      playerRooms.delete(socket.id)
-
-      if (room.players.length === 0) {
-        // Clean up empty room
-        if (roomTimers.has(roomId)) {
-          clearInterval(roomTimers.get(roomId))
-          roomTimers.delete(roomId)
-        }
-        rooms.delete(roomId)
-        console.log(`[Server] Room ${roomId} deleted (empty)`)
-      } else {
-        // Transfer host if needed
-        if (player.isHost && room.players.length > 0) {
-          room.players[0].isHost = true
-          console.log(`[Server] Host transferred to ${room.players[0].name} in room ${roomId}`)
-        }
-
-        // If the disconnected player was drawing, end the round
-        if (player.isDrawing) {
-          if (roomTimers.has(roomId)) {
-            clearInterval(roomTimers.get(roomId))
-            roomTimers.delete(roomId)
-          }
-          endRound(roomId)
-        }
-
-        socket.to(roomId).emit("player-left", {
-          player,
-          players: room.players,
-        })
+      if (!roomId) {
+        console.log(`[Server] Player ${socket.id} disconnected (no room)`)
+        return
       }
 
-      console.log(`[Server] Player ${player.name} disconnected from room ${roomId}`)
+      const room = rooms.get(roomId)
+      if (!room) {
+        console.log(`[Server] Player ${socket.id} disconnected (room not found)`)
+        playerRooms.delete(socket.id)
+        return
+      }
+
+      console.log(`[Server] Player ${socket.id} disconnected from room ${roomId}`)
+      removePlayerFromRoom(socket, roomId)
     } catch (error) {
       console.error("Disconnect error:", error)
     }
   })
 
   // Send periodic stats updates
-  setInterval(() => {
+  const statsInterval = setInterval(() => {
     const stats = {
       totalRooms: rooms.size,
       totalPlayers: Array.from(rooms.values()).reduce((sum, room) => sum + room.players.length, 0),
       activeGames: Array.from(rooms.values()).filter(room => room.gameState === "playing").length,
     }
     io.emit("server-stats", stats)
-  }, 30000) // Every 30 seconds
+  }, 30000)
+
+  // Clear interval on disconnect
+  socket.on("disconnect", () => {
+    clearInterval(statsInterval)
+  })
 })
 
 app.get("/", (req, res) => {
   res.send("Brush Rush Server")
 })
 
-const PORT = process.env.SOCKET_PORT || 3001
-httpServer.listen(PORT,"0.0.0.0", () => {
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+    rooms: rooms.size,
+    players: Array.from(rooms.values()).reduce((sum, room) => sum + room.players.length, 0),
+    uptime: process.uptime()
+  })
+})
+
+const PORT = process.env.PORT || process.env.SOCKET_PORT || 3001
+httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Socket.IO server running on port ${PORT}`)
   console.log(`WebSocket URL: ws://localhost:${PORT}`)
   console.log("Ready to accept connections...")
   console.log("Supported events:")
-  console.log("- create-room, join-room, start-game")
+  console.log("- create-room, join-room, leave-room, start-game")
   console.log("- update-room, restart-game")
   console.log("- chat-message, drawing-event, clear-canvas")
   console.log("- kick-player, get-public-rooms")
